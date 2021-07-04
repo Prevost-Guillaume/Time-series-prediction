@@ -21,7 +21,9 @@ Here is the original serie :
 
 First, the serie is normalized using a rolling mean and a rolling standard deviation. We get the following serie :
 <img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/Norm.png>
+
 The mean and the std are forecasted with a scikit learn model :
+
 <img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/trend%20forecasting.png>
 <img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/Var%20forecasting.png>
 
