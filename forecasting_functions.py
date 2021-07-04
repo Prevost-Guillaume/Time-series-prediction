@@ -24,7 +24,7 @@ from statsmodels.tsa.stattools import acf
 
 #################################################################################################################################################
 #                                                                                                                                               #
-#                                                        FIRST FUNCTION LAYER                                                                   #
+#                                                           TOOLS FUNCTIONS                                                                     #
 #                                                                                                                                               #
 #################################################################################################################################################
 def sortBy(l1, l2):
@@ -37,24 +37,16 @@ def sortBy(l1, l2):
                 l1[j], l1[j + 1] = l1[j + 1], l1[j]
     return l1
 
-def getSeasonnalPeriod(serie, order=1, filter_acf=None, nlags=None, show=False):
-    """return period to use for seasonnal decomposition. Uses the autocorrelation function"""
 
-    if nlags == None:
-        nlags = len(serie)
-
+def plotACF(serie):
+    """Plot signal autocorrelation function"""
     # Get autocorrelation function of signal
-    f = acf(serie, nlags=nlags, fft=True)
-
-    if filter_acf != None:
-        # Low-pass filter f
-        b, a = signal.butter(3, filter_acf, btype='lowpass')
-        f = signal.filtfilt(b, a, f)
+    f = acf(serie, nlags=len(serie), fft=True)
 
     indexs = [i for i in range(len(f))]
 
     # Get local maximas indexs
-    maxi = list(argrelextrema(f, np.greater_equal, order=order)[0])
+    maxi = list(argrelextrema(f, np.greater_equal, order=1)[0])
 
     # Remove start and end : Not really local maximas
     if 0 in maxi:
@@ -62,29 +54,61 @@ def getSeasonnalPeriod(serie, order=1, filter_acf=None, nlags=None, show=False):
     if indexs[-1] in maxi:
         maxi.remove(indexs[-1])
 
-    # Sort by amplitudes
-    amplitudes = [f[i] for i in maxi]
-    periodsToAmpls = {maxi[i]: amplitudes[i] for i in range(len(maxi))}
 
-    sorted_periods = sortBy(list(periodsToAmpls.keys()), amplitudes)
+    plt.plot(indexs, f, label='acf')
+    plt.scatter(maxi, [f[m] for m in maxi], c='red', s=4)
+    plt.title('autocorrelation function')
+    plt.show()
 
-    if show:
-        plt.plot(indexs, f)
-        plt.show()
+    return maxi
+    
 
-    if len(sorted_periods) == 0:
-        return 0
+def findBestPeriods(df, periods, col='y', show=True, strategy='median'):
+    """Shox a graph of each period variance
+    Use df[df.index%p].mean() ou df[df.index%p].median() pour calculer la periodicité rapidement"""
+    periods = sorted(periods)
+    n = len(df[col])
 
-    return sorted_periods
+    df_copy = df.copy()
+    var = df_copy[col].std()
+
+    ind = []
+    rat = []
+    for p in periods:
+        # Get seasonnal component
+        df_copy[str(p)] = df_copy.index%p
+        if strategy == 'mean':
+            season = df_copy.groupby(df_copy[str(p)]).mean()
+        elif strategy == 'median':
+            season = df_copy.groupby(df_copy[str(p)]).median()
+        
+        # Calcul var
+        ratio = season[col].std()/var
+
+        # Substract seasonnal component from df_copy
+        seasonnal_conponent = (list(season[col])*(int(n/p)+1))[:n]
+        ind.append(p)
+        rat.append(ratio)
+        
+        df_copy[col] = df_copy[col]-seasonnal_conponent
+
+    plt.plot(ind, rat)
+    plt.title("Periods importance")
+    plt.savefig("Period_importance.png")
+    plt.show()
+
+    # get best periods
+    SortedPeriods = sortBy(ind, rat)
+    return SortedPeriods
 
 
 #################################################################################################################################################
 #                                                                                                                                               #
-#                                                       SECOND FUNCTION LAYER                                                                   #
+#                                                            PREDICT FUNCTIONS                                                                  #
 #                                                                                                                                               #
 #################################################################################################################################################    
-def extractTrend(signal, model_trend=Ridge(), trend_degree=3, moving_window=None, moving_window_degree=1, N=1):
-    """Return trend of signal"""
+def predictTrend(signal, model_trend=Ridge(), trend_degree=1, N=1):
+    """Get and predict trend of signal"""
     y = signal
     x = [[i] for i in range(len(list(y)))]
 
@@ -94,45 +118,31 @@ def extractTrend(signal, model_trend=Ridge(), trend_degree=3, moving_window=None
     trend = model.predict(x)
 
     # Forecast trend
-    if moving_window == None:
-        # Use same model
-        pred_trend = model.predict([[i + len(list(y))] for i in range(N)])
-    else:
-        # Fit model on last moving_window values of signal
-        y = signal[-moving_window:]
-        x = [[i] for i in range(len(list(y)))][-moving_window:]
-        model = make_pipeline(PolynomialFeatures(degree=trend_degree), StandardScaler(), model_trend)
-        model.fit(x, y)
-        pred_trend = model.predict([[i + len(list(y))] for i in range(N)])
+    pred_trend = model.predict([[i + len(list(y))] for i in range(N)])
+
+    # Move pred_trend to make it coherent
+    adjusted_pred_trend = pred_trend+(list(y)[-1]-pred_trend[0])
     
-    return trend, signal-trend, pred_trend
+    return trend, pred_trend, adjusted_pred_trend
 
 
-    
-def extractSeasonnalities(serie, model_seasonnal=RandomForestRegressor(), n=None, Kbests=None, treshold=0, N=1, verbose=False):
-    """Get different seasonnalities of signal"""
+
+def extractSeasonnalities(serie, model_seasonnal=RandomForestRegressor(), periods=None, N=1):
+    """Get and predict different seasonnalities of signal"""
     y = serie
 
-    # Create n = periodic components (features for models)
-    if n==None:
-        # Classical periods
-        n = [2, 7, 12, 24, 60, 30, 365]
-        # Automatically find good periods (local maximas of autocorrelation function)
-        p = getSeasonnalPeriod(serie, order=1, filter_acf=None, show=False)[:3]
-        p = [i for i in p if i!=0]
-        n += p
-        # Avoid overfitting by removing largest periods
-        n = [i for i in n if 2*i<=len(y)]
-    n = list(dict.fromkeys(n))
+    # Remove doubles
+    periods = list(dict.fromkeys(periods))
     # Sort by ascending order is important
-    n.sort()
+    periods.sort()
 
-
-    # Extract seasonnalities for each n    
+    # Extract seasonnalities for each period   
     seasonnalities = {}
     pred_seasonnalities = {}
     y_dt = list(y)
-    for p in n:
+    i = 0
+    for p in periods:
+        i+=1
         x = [[i%p] for i in range(len(list(y)))]
         model = make_pipeline(StandardScaler(), model_seasonnal)
         model.fit(x, y)
@@ -143,45 +153,33 @@ def extractSeasonnalities(serie, model_seasonnal=RandomForestRegressor(), n=None
         y = y-seasonnalities[str(p)]
         
 
-    # Get score for each se asonnality, keep only if greater than treshold
-    periods = []
-    variances = []
-    if verbose:
-        print('  {: <10}'.format('Period '),'Variance')
-    for p in seasonnalities:
-        # Filter y to compare variances of same frequencies
-        b, a = signal.butter(3, 1/int(p), btype='highpass')
-        y_t = signal.filtfilt(b, a, list(serie))
-        y_dt = serie - y_t
-
-        # Compute y variance
-        mean_y = sum(y_dt) / len(y_dt) 
-        variance_y = sum([((x - mean_y) ** 2) for x in y_dt]) / len(y_dt)
-
-        # Compute p-seasonnality relative variance
-        mean = sum(seasonnalities[p]) / len(seasonnalities[p]) 
-        variance = (sum([((x - mean) ** 2) for x in seasonnalities[p]]) / len(seasonnalities[p]))/variance_y
-
-        if verbose:
-            print('  {:.<10}'.format(p+' '),round(variance,3))
-    
-        if variance > treshold:
-            periods.append(int(p))
-            variances.append(variance)
-
-    # Keep only K bests seasonnalities
-    if Kbests != None:
-        periods = sortBy(periods, variances)
-        periods = periods[:Kbests]
-
-    seasonnalities = {str(p) : seasonnalities[str(p)] for p in periods[:Kbests]}
-    pred_seasonnalities = {str(p) : pred_seasonnalities[str(p)] for p in periods[:Kbests]}
-
     return seasonnalities, pred_seasonnalities
 
 
+#################################################################################################################################################
+#                                                                                                                                               #
+#                                                           NORMALIZATION                                                                       #
+#                                                                                                                                               #
+#################################################################################################################################################    
+    
+
+def Normalize(signal, rolling_period_trend=100, rolling_period_var=100):
+    """Normalize the signal"""
+    if rolling_period_trend > len(signal) or rolling_period_trend == 0:
+        mean = signal-signal
+    else:
+        mean = signal.rolling(rolling_period_trend).mean()
+    demean = signal - mean
+    mean = mean.fillna(0)
+    demean = demean.fillna(0)
+
+    if rolling_period_var > len(signal) or rolling_period_var == 0:
+        var = signal/signal
+    else:
+        var = demean.rolling(rolling_period_var).std()
+    normalize = demean/var
+    var = var.fillna(0)
+    normalize = normalize.fillna(0)
 
 
-        
-
-
+    return mean, var, normalize
