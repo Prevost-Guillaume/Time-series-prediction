@@ -28,8 +28,9 @@ The mean and the std are forecasted with a scikit learn model :
 <img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/Var%20forecasting.png>
 
 Then, seasonnalities are extracted from the normalised serie. 
-To do this, it is necessary to know the period of the different seasonality. For that, I have implemented a graphical tool that highlights the periodicities present in the signal.
-<img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/period_importance.png>
+To do this, it is necessary to know the period of the different seasonality. For that, I have implemented a graphical tool that highlights the periodicities present in the signal, using decisionTree Regressors.
+<img src=https://github.com/Prevost-Guillaume/Time-series-prediction/blob/main/images/Period_importance.png>
+
 Here we can note a pericity of 6, a periodicity of 12 and one of 23. 
 
 Seasonnalities are then extracted using a randomForestRegressor from scikit-learn.
